@@ -1,5 +1,9 @@
 # dsh-billing-chip
 
+[![npm version](https://img.shields.io/npm/v/dsh-billing-chip.svg)](https://www.npmjs.com/package/dsh-billing-chip)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-billing-chip.svg)](https://www.npmjs.com/package/dsh-billing-chip)
+[![license](https://img.shields.io/npm/l/dsh-billing-chip.svg)](LICENSE)
+
 挂在 DSH Web 界面右下角的一小块**纯文字计费牌**：当前模型、这一轮花了多少、今天累计多少、DeepSeek 账户还剩多少、现在是峰时还是谷时。右键可以直接填 API Key。
 
 没有头像、没有插画、没有动画 —— 只有数字。窄到不挡事，一眼能看完。
@@ -126,7 +130,7 @@ curl -s "$DSH_URL/api/dsh-billing-chip/state" -H "Origin: $DSH_URL"
 
 ## 安装
 
-一行（npm，装进 `web` profile）：
+一行（[npm](https://www.npmjs.com/package/dsh-billing-chip) 上的 `dsh-billing-chip@0.2.0`，装进 `web` profile）：
 
 ```bash
 dsh plugin --profile web add dsh-billing-chip
