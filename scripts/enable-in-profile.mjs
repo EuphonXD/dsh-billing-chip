@@ -38,6 +38,49 @@ const profileDir = join(dshHome, "profiles", profileName);
 const profileJsonPath = join(profileDir, "package.json");
 const WRITE = flag("write");
 const INSTALL = !flag("no-install");
+const SERVICE = opt("service", "dsh-web.service");
+const STOP_SERVICE = flag("stop-service");
+
+// pnpm 重建 node_modules 期间，如果 dsh web 正在跑，HMR 会立刻重载插件层 →
+// 重载时 node_modules 还是空的 → 所有插件加载失败（表现：记忆/口袋/团队全没了），
+// 而且安装本身也会被打断，留下一个空的 node_modules。
+// 所以：默认要求先停服务；--stop-service 让它自己停、装完再起。
+function serviceActive() {
+  try {
+    const out = execFileSync("systemctl", ["is-active", SERVICE], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return out === "active";
+  } catch {
+    return false;
+  }
+}
+
+function systemctl(verb) {
+  execFileSync("systemctl", [verb, SERVICE], { stdio: "inherit" });
+}
+
+/** node_modules 硬链接快照：秒级、几乎不占空间，安装失败可以立刻还原 */
+function snapshotNodeModules() {
+  const target = join(profileDir, `node_modules.bak.${Date.now()}`);
+  if (!existsSync(join(profileDir, "node_modules"))) return null;
+  try {
+    execFileSync("cp", ["-al", join(profileDir, "node_modules"), target], { stdio: "ignore" });
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+function restoreSnapshot(target) {
+  if (!target || !existsSync(target)) return false;
+  const live = join(profileDir, "node_modules");
+  try {
+    execFileSync("rm", ["-rf", live], { stdio: "ignore" });
+    execFileSync("mv", [target, live], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function die(message) {
   console.error(`✗ ${message}`);
@@ -98,7 +141,32 @@ if (before === after && !flag("force")) {
 if (!WRITE) {
   console.log("这是 dry-run。确认没问题后重跑并加 --write：");
   console.log(`  node scripts/enable-in-profile.mjs --profile ${profileName} --write`);
+  if (serviceActive()) {
+    console.log("");
+    console.log(`⚠ ${SERVICE} 正在运行。真正安装前请先停它，或者加 --stop-service 让脚本自己停：`);
+    console.log(`  systemctl stop ${SERVICE}`);
+  }
   process.exit(0);
+}
+
+// 写盘前的守卫：服务还在跑 + 要动 node_modules = 会把自己（正在运行的 dsh web）搞坏
+if (INSTALL && serviceActive() && !STOP_SERVICE) {
+  console.error(`✗ ${SERVICE} 正在运行，不能直接改 node_modules。`);
+  console.error("");
+  console.error("  pnpm 重建 node_modules 的这几秒里，dsh 的 HMR 会发现 profile 变了并立刻重载；");
+  console.error("  重载时依赖还没落地 → 所有插件一起加载失败（记忆、口袋、团队都会消失），");
+  console.error("  安装本身也可能被打断，只剩一个空的 node_modules。");
+  console.error("");
+  console.error("两种做法，选一种：");
+  console.error("  A) 手动编排：");
+  console.error(`       systemctl stop ${SERVICE}`);
+  console.error(`       node scripts/enable-in-profile.mjs --profile ${profileName} --write`);
+  console.error(`       systemctl start ${SERVICE}`);
+  console.error("  B) 让脚本自己停、装、起：");
+  console.error(`       node scripts/enable-in-profile.mjs --profile ${profileName} --write --stop-service`);
+  console.error("");
+  console.error("  只想先改 package.json、不碰 node_modules（服务可继续跑）：加 --no-install");
+  process.exit(2);
 }
 
 const backup = `${profileJsonPath}.bak.${Date.now()}`;
@@ -108,12 +176,70 @@ console.log(`✓ 已写入 ${profileJsonPath}`);
 console.log(`  备份：${backup}`);
 
 if (INSTALL) {
-  console.log("\n跑 pnpm install…");
+  const wasActive = serviceActive();
+  if (wasActive && STOP_SERVICE) {
+    console.log(`\n先停 ${SERVICE}…`);
+    systemctl("stop");
+  }
+
+  const snapshot = snapshotNodeModules();
+  if (snapshot) console.log(`node_modules 快照：${snapshot}`);
+
+  // 两阶段，尽量不动网络、不动旧依赖：
+  //   1) pnpm add <name>@link:… --lockfile-only   只改 lock，不碰 node_modules
+  //   2) pnpm install --frozen-lockfile --prefer-offline  按 lock 从 store 链接
+  // 这样即使中途被打断，也不会留下一堆下载了一半的包。
+  console.log("\n[1/2] 更新 lockfile（不碰 node_modules）…");
+  let lockOk = false;
   try {
-    execFileSync("pnpm", ["install", "--no-frozen-lockfile"], { cwd: profileDir, stdio: "inherit" });
+    execFileSync("pnpm", ["add", `${pluginName}@link:${pluginDir}`, "--lockfile-only"], {
+      cwd: profileDir,
+      stdio: "inherit",
+      timeout: 120000,
+    });
+    lockOk = true;
+  } catch (error) {
+    console.error(`  lockfile-only 失败（${error.message}），退回到整体安装`);
+  }
+
+  console.log("\n[2/2] 链接依赖（frozen lockfile + 本地 store）…");
+  try {
+    const args = lockOk
+      ? ["install", "--frozen-lockfile", "--prefer-offline"]
+      : ["install", "--no-frozen-lockfile", "--prefer-offline"];
+    execFileSync("pnpm", args, { cwd: profileDir, stdio: "inherit", timeout: 300000 });
     console.log("✓ 依赖装好");
   } catch (error) {
-    die(`pnpm install 失败：${error.message}\n  手动进 ${profileDir} 跑一次 pnpm install`);
+    console.error(`✗ pnpm install 失败：${error.message}`);
+    if (snapshot && restoreSnapshot(snapshot)) {
+      console.error("✓ 已从快照还原 node_modules（服务恢复原样）");
+    } else {
+      console.error("⚠ 没能还原快照，手动跑一次：");
+      console.error(`   cd ${profileDir} && pnpm install --frozen-lockfile --prefer-offline`);
+    }
+    if (wasActive && STOP_SERVICE) {
+      console.error(`把服务起回来：systemctl start ${SERVICE}`);
+      try {
+        systemctl("start");
+      } catch {
+        /* ignore */
+      }
+    }
+    process.exit(1);
+  }
+
+  if (snapshot && existsSync(snapshot)) {
+    try {
+      execFileSync("rm", ["-rf", snapshot], { stdio: "ignore" });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (wasActive && STOP_SERVICE) {
+    console.log(`\n重新启动 ${SERVICE}…`);
+    systemctl("start");
+    console.log("✓ 服务已起");
   }
 }
 
