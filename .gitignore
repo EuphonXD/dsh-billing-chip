@@ -1,0 +1,8 @@
+node_modules/
+pnpm-lock.yaml
+*.log
+.DS_Store
+
+# 本地设置（可能含 API Key）
+settings.json
+.dsh-billing-chip/

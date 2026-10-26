@@ -1,0 +1,42 @@
+{
+  "name": "dsh-billing-chip",
+  "version": "0.1.0",
+  "description": "DSH 插件：屏幕右下角一块纯文字的 API 计费牌 —— 当前模型、本轮花费、今日累计、账户余额、峰谷，右键可直接填 DeepSeek API Key。",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "src",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "billing",
+    "token",
+    "cost",
+    "deepseek"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "MIT"
+}

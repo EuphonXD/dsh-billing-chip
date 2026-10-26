@@ -1,0 +1,6 @@
+# dsh-billing-chip bundle patch：把本插件插进 profile 的层栈。
+# profile 的 dsh.profile.bundles 里列出 dsh-billing-chip 时自动生效；
+# 手动安装也可以把这条 insert 抄进自己的 cordis.patch.yml。
+- insert:
+    - id: dsh-billing-chip
+      name: 'dsh-billing-chip'
