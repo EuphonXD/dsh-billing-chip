@@ -392,6 +392,7 @@ export function apply(ctx, config) {
   const allowRemote = cfg.allowRemote === true;
 
   let cache = null; // { key, at, value }
+  let cachePrev = null; // 与 cache 同步：预估输入侧的兜底用量
   let balanceCache = null; // { at, value }
   let balanceInflight = null; // Promise | null
   let refreshedTurn = null; // 已因"本轮结束"刷过余额的 turn 标记
@@ -694,7 +695,7 @@ export function apply(ctx, config) {
       return {
         ...cache.value,
         at: Date.now(),
-        live: liveView(cache.value.model, cache.value.peak, settings.priceOverrides, prevUsage),
+        live: liveView(cache.value.model, cache.value.peak, settings.priceOverrides, cachePrev),
       };
     }
 
@@ -741,6 +742,8 @@ export function apply(ctx, config) {
       if (!u) return null;
       return { inTok: Number(u.inputTokens) || 0, cacheTok: Number(u.cacheReadTokens) || 0 };
     })();
+
+    cachePrev = prevUsage;
 
     // 本轮：当前日志里最后一个 turn 的用量
     let turn = null;
