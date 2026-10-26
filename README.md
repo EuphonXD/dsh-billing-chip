@@ -99,7 +99,7 @@ profile 的 `package.json` 应该长这样：
     apiKey: ''              # 也可以在这里给 Key（不推荐，会进版本库）
     defaultModel: deepseek-flash   # 日志里读不到模型时的兜底
     settingsPath: ''        # 默认 $DSH_HOME/dsh-billing-chip/settings.json
-    allowRemote: false      # true 才允许非本机地址访问它的 HTTP 路由
+    allowRemote: false      # true 才允许任意来源（含非浏览器的远程脚本）访问它的 HTTP 路由
     priceOverrides:         # 官方调价时不用改代码
       deepseek-flash:
         hit: [0.02, 0.04]
@@ -151,7 +151,8 @@ profile 的 `package.json` 应该长这样：
 
 - **只读**：会话日志只读不写；除 `GET /user/balance`（带你的 Key）之外不向任何地方发请求，也没有埋点。
 - **Key 只存在本机**：写进 `$DSH_HOME/dsh-billing-chip/settings.json`，`0600`；接口只回显掩码（`sk-c4…d318`），不返回明文。日志里不打印 Key。
-- **默认只认本机**：四条路由在 `allowRemote: false` 时只接受回环地址（127.0.0.1 / ::1）的请求，局域网里别的机器访问会被 403 挡掉。要在手机上看的话再开 `allowRemote`，并自己确认那个端口有鉴权。
+- **默认只接受本机或同源请求**：`allowRemote: false` 时，只有回环地址（127.0.0.1 / ::1）或者 Origin 与 Host 一致的浏览器请求能通过。也就是说，你在局域网里用 `http://192.168.31.206:3080` 打开 DSH，牌子照常工作；但外部脚本直接 `curl` 这个接口会被 403 挡掉。远程运维要直连接口时才把它设成 `true`。
+- 顺带一提：这个端口本身有没有登录保护取决于你的 DSH 部署 —— 插件只是不额外扩大暴露面。
 - 界面完全由 client half 自绘，样式跟随 DSH 主题变量（`--dsw-alias-*`），亮色/暗色都自适应。
 
 ## 已知限制

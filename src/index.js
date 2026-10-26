@@ -325,6 +325,21 @@ function isLoopback(req) {
   );
 }
 
+/**
+ * 浏览器发起的同源请求：Origin 必须存在且与 Host 一致。
+ * 局域网里用 192.168.x.x:端口 打开 DSH 时就走这条路；
+ * 而外部脚本没有 Origin，会被挡在门外（除非 allowRemote）。
+ */
+function isSameOrigin(req) {
+  const origin = req.headers?.origin;
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === String(req.headers.host || "");
+  } catch {
+    return false;
+  }
+}
+
 function sendJson(res, status, body) {
   const text = JSON.stringify(body);
   res.writeHead(status, {
@@ -504,8 +519,11 @@ export function apply(ctx, config) {
           path: route.path,
           handler: async (req, res) => {
             try {
-              if (!allowRemote && !isLoopback(req)) {
-                sendJson(res, 403, { ok: false, error: "forbidden: 只允许本机访问（config.allowRemote 可放开）" });
+              if (!allowRemote && !isLoopback(req) && !isSameOrigin(req)) {
+                sendJson(res, 403, {
+                  ok: false,
+                  error: "forbidden: 只接受本机或同源浏览器请求（config.allowRemote 可放开）",
+                });
                 return;
               }
               await route.handler(ctx, req, res);
