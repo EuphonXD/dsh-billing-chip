@@ -36,12 +36,12 @@ node scripts/find-dsh.mjs
 成功输出长这样：
 
 ```
-DSH_FOUND http://192.168.31.206:3080
+DSH_FOUND http://192.168.1.10:3080
   source:        本机端口 3080 (401 提示文案)
   authenticated: no（需要 DSH Web 打印的 token 链接打开）
 
-下一步：用浏览器打开 http://192.168.31.206:3080 ，或者把下面这行给安装脚本：
-DSH_URL=http://192.168.31.206:3080
+下一步：用浏览器打开 http://192.168.1.10:3080 ，或者把下面这行给安装脚本：
+DSH_URL=http://192.168.1.10:3080
 ```
 
 失败输出：`DSH_NOT_FOUND 三级探测都没找到，需要手动确认。`
@@ -56,10 +56,10 @@ node scripts/find-dsh.mjs --local
 node scripts/find-dsh.mjs --lan
 
 # 指定网段和端口（端口不是默认那几个时用这个）
-node scripts/find-dsh.mjs --lan --range 192.168.31.0/24 --ports 3080,8080
+node scripts/find-dsh.mjs --lan --range 192.168.1.0/24 --ports 3080,8080
 
 # 已经知道地址，只验证它是不是 DSH
-node scripts/find-dsh.mjs --url http://192.168.31.206:3080
+node scripts/find-dsh.mjs --url http://192.168.1.10:3080
 
 # 机器可读（自己解析用）
 node scripts/find-dsh.mjs --json
@@ -74,13 +74,13 @@ node scripts/find-dsh.mjs --manual
 
 ```
 我没在这台机器和它的局域网里找到 DSH Web，能告诉我它的地址吗？
-形如 http://192.168.31.206:3080（就是你平时打开 DSH 的那个网址，去掉 ?token=… 后面的部分）
+形如 http://192.168.1.10:3080（就是你平时打开 DSH 的那个网址，去掉 ?token=… 后面的部分）
 ```
 
 ## 步骤 2 · 确认这个地址真的是 DSH（别跳过）
 
 ```bash
-DSH_URL=http://192.168.31.206:3080
+DSH_URL=http://192.168.1.10:3080
 curl -s -o /dev/null -w '%{http_code}\n' "$DSH_URL/"
 ```
 

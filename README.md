@@ -6,6 +6,21 @@
 
 ![计费牌](docs/chip.png)
 
+**特色是「本轮花费实时估算」**：DSH 的会话日志要 1–5 分钟才落盘，等它算钱，一轮早结束了。这个插件直接订阅模型输出流，数着生成的字符实时折算 token，钱在牌子上一分一分往上跳 —— 不用等账。结算后再把「实际 · 预估」并排放在一起，让你知道这次估得准不准。
+
+## 实时估算怎么算（本仓库的重点）
+
+同一套算法移植自桌宠的计费板（`bridge.mjs` 的 `estAdd` / `estEmit`）：
+
+1. 跟随当前活跃会话的 assistant 流，收 `reasoning-delta` / `text-delta` 的每一段文字（思考内容也算，它是要计费的）
+2. 字符折算输出 token：**汉字 0.6 token/字，其他字符 0.3 token/字**
+3. 输出侧取 `max(本轮已结算 output, 字符估算)` —— 真实值到了就以真实值为准
+4. 输入侧用本轮已结算的 `cacheRead` + `uncachedInput`；这一步还没结算时，退回上一次请求的量级（每步都重发全量上下文，量级接近）
+5. 套官方价（峰/谷）算出金额，每来一段增量就重算
+
+实测（`deepseek-flash`，让模型写 600 字散文）：流式期间涨到 `≈ ¥0.0126`，结算后实际 `¥0.0126`，**误差 0%**。
+多 step 的轮次（中间调工具）按同一个 turn 累加字符，不会被每次工具调用打断。
+
 ## 它算的是什么
 
 DSH 每一轮对话都会把 `usage`（输入 / 缓存命中 / 缓存写入 / 输出 token）写进会话日志：
@@ -35,29 +50,17 @@ $DSH_HOME/sessions/<workspace>/<session-id>/session.v4.jsonl.zstd
 - **缓存超过 60 秒**时后台补一次（先显示旧值，拉到后下次轮询自动替换，不会突然变成「…」）
 - **保存新 Key 后**、**右键「刷新余额」**时同步拉一次
 - 失败不覆盖旧值：网络抖动或 Key 失效时，牌子上继续显示上一次成功的结果
+
 | 峰 / 谷 | 北京时间工作日 09:00–12:00、14:00–18:00 为高峰（价格翻倍）；周末与法定节假日全天按谷时价 |
 
 订阅流走的是 DSH 自己的 `sessionController.follow()`（cordis service，没装就自动退回只读日志），不抓 cookie、不碰私有 HTTP 端点。
-
-## 实时预估怎么算
-
-和桌宠的计费牌同一套算法（`bridge.mjs` 的 `estAdd` / `estEmit`）：
-
-1. 跟随当前活跃会话的 assistant 流，收 `reasoning-delta` / `text-delta` 的每一段文字（思考内容也算，它是要计费的）
-2. 字符折算输出 token：**汉字 0.6 token/字，其他字符 0.3 token/字**
-3. 输出侧取 `max(本轮已结算 output, 字符估算)` —— 真实值到了就以真实值为准
-4. 输入侧用本轮已结算的 `cacheRead` + `uncachedInput`；这一步还没结算时，退回上一次请求的量级（每步都重发全量上下文，量级接近）
-5. 套官方价（峰/谷）算出金额，每来一段增量就重算
-
-实测（`deepseek-flash`，让模型写 600 字散文）：流式期间涨到 `≈ ¥0.0126`，结算后实际 `¥0.0126`，**误差 0%**。
-多 step 的轮次（中间调工具）按同一个 turn 累加字符，不会被每次工具调用打断。
 
 ## 显示
 
 ```
 deepseek-flash      峰
-本轮 ¥1.2981
-今日 ¥2.57  余额 ¥34.19
+本轮 ¥0.0421
+今日 ¥2.57  余额 ¥118.00
 ```
 
 配色和金额刻度与桌宠的计费牌一致：深梦蓝渐变卡、模型名浅蓝 `#bfeaff`、本轮数字暖黄 `#ffe1a8`、次要信息奶油色 62%。
@@ -80,6 +83,8 @@ deepseek-flash      峰
 刚结算完（金色，闪 2.4 秒）：
 
 ![结算](docs/chip-settled.png)
+
+牌子上能做什么：
 
 - **拖动**：按住牌子拖到任意位置（位置记在 localStorage，同时回报给后端）
 - **双击**：折叠成一行（只留模型和本轮金额）
@@ -212,9 +217,9 @@ profile 的 `package.json` 应该长这样：
   "peak": true,
   "sessions": 5,
   "hasKey": true,
-  "keyMasked": "sk-c4…d318",
+  "keyMasked": "sk-ab…9f21",
   "keySource": "settings",
-  "balance": { "currency": "CNY", "total": 34.19, "granted": 0, "toppedUp": 34.19, "available": true },
+  "balance": { "currency": "CNY", "total": 118.0, "granted": 0, "toppedUp": 118.0, "available": true },
   "allowRemote": false,
   "ui": {}
 }
@@ -223,8 +228,8 @@ profile 的 `package.json` 应该长这样：
 ## 隐私与安全
 
 - **只读**：会话日志只读不写；除 `GET /user/balance`（带你的 Key）之外不向任何地方发请求，也没有埋点。
-- **Key 只存在本机**：写进 `$DSH_HOME/dsh-billing-chip/settings.json`，`0600`；接口只回显掩码（`sk-c4…d318`），不返回明文。日志里不打印 Key。
-- **默认只接受本机或同源请求**：`allowRemote: false` 时，只有回环地址（127.0.0.1 / ::1）或者 Origin 与 Host 一致的浏览器请求能通过。也就是说，你在局域网里用 `http://192.168.31.206:3080` 打开 DSH，牌子照常工作；但外部脚本直接 `curl` 这个接口会被 403 挡掉。远程运维要直连接口时才把它设成 `true`。
+- **Key 只存在本机**：写进 `$DSH_HOME/dsh-billing-chip/settings.json`，`0600`；接口只回显掩码（`sk-ab…9f21`），不返回明文。日志里不打印 Key。
+- **默认只接受本机或同源请求**：`allowRemote: false` 时，只有回环地址（127.0.0.1 / ::1）或者 Origin 与 Host 一致的浏览器请求能通过。也就是说，你在局域网里用 `http://192.168.1.10:3080` 打开 DSH，牌子照常工作；但外部脚本直接 `curl` 这个接口会被 403 挡掉。远程运维要直连接口时才把它设成 `true`。
 - 顺带一提：这个端口本身有没有登录保护取决于你的 DSH 部署 —— 插件只是不额外扩大暴露面。
 - 界面完全由 client half 自绘，配色沿用桌宠牌子的深梦蓝色板（深色卡 + 奶油字 + 暖黄数字），亮色/暗色主题下都是同一块深色小牌。
 
@@ -235,7 +240,8 @@ profile 的 `package.json` 应该长这样：
 - 今日累计扫的是 `$DSH_HOME/sessions` 下所有 workspace 的日志，**子代理的会话也算在里面**（它们的 usage 同样落在日志里）。
 - 节假日表写在 `src/index.js` 顶部，每年要补一次。
 - 需要 Node ≥ 22.13（用到 `zlib.zstdDecompressSync`）。
-- 目前只在 DeepSeek Harness 0.2 的 Web profile 上验证过。
+- 目前只在 DeepSeek Harness 0.2 的 Web profile 上验证过；`dsh` 是本地起的还是 systemd 起的都行，但**插件必须装在会话所在的那个 dsh 进程的 profile 里** —— 实时流是进程内数据，装在别的实例上只能读到日志（预估会退回"只按已结算 usage 算"）。
+- 实时估算靠的是字符折算，**长英文/代码块会比中文更准**（0.3 系数对英文单词偏高一点），极端长的单轮会有百分级偏差。
 
 ## License
 
