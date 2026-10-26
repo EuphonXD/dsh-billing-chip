@@ -393,6 +393,31 @@ export function apply(ctx, config) {
 
   let cache = null; // { key, at, value }
   let balanceCache = null; // { at, value }
+  let balanceInflight = null; // Promise | null
+  let refreshedTurn = null; // 已因"本轮结束"刷过余额的 turn 标记
+
+  /**
+   * 余额刷新策略：
+   *  - 缓存过期（BALANCE_MS）→ 后台重新拉一次，本次先返回旧值，界面不会突然变成 "…"
+   *  - 每轮刚结束时（done 由 false 变 true）→ 立刻刷一次，因为刚花掉钱
+   *  - 手动：右键"刷新余额"、保存新 Key
+   */
+  function ensureBalance(resolved, force) {
+    if (!resolved.key) return;
+    const stale = !balanceCache || Date.now() - balanceCache.at > BALANCE_MS;
+    if (!force && !stale) return;
+    if (balanceInflight) return;
+    balanceInflight = fetchBalance(resolved.key)
+      .then((b) => {
+        if (b.ok) balanceCache = { at: Date.now(), value: b };
+      })
+      .catch(() => {
+        /* 网络抖动就维持旧值 */
+      })
+      .finally(() => {
+        balanceInflight = null;
+      });
+  }
 
   function computeState(settings) {
     const resolved = resolveKey(settings, cfg);
@@ -449,6 +474,17 @@ export function apply(ctx, config) {
       if (current.model) model = current.model;
     }
 
+    // 本轮刚结束 → 立刻刷一次余额（同一轮只刷一次）
+    if (turn && turn.done && current) {
+      const mark = `${current.file}:${turn.index}`;
+      if (refreshedTurn !== mark) {
+        refreshedTurn = mark;
+        ensureBalance(resolved, true);
+      }
+    } else {
+      ensureBalance(resolved, false);
+    }
+
     const value = {
       ok: true,
       at: Date.now(),
@@ -462,7 +498,7 @@ export function apply(ctx, config) {
       keyMasked: maskKey(resolved.key),
       keySource: resolved.source,
       allowRemote,
-      balance: balanceCache && Date.now() - balanceCache.at < BALANCE_MS ? balanceCache.value : null,
+      balance: balanceCache ? balanceCache.value : null,
       ui: settings.ui,
     };
     cache = { key, at: Date.now(), value };
