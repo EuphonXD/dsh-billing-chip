@@ -22,9 +22,11 @@
   },
   "files": [
     "src",
+    "scripts",
     "docs",
     "cordis.patch.yml",
     "README.md",
+    "SETUP-AI.md",
     "LICENSE"
   ],
   "keywords": [

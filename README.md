@@ -49,6 +49,28 @@ deepseek-flash          峰
 
 还没填 Key 的时候，直接**点一下牌子**也会弹出输入框。
 
+## 让 AI 帮你装
+
+包里带了两个脚本和一份给 AI 的流程说明（[SETUP-AI.md](SETUP-AI.md)），把仓库地址丢给 DSH 里的 AI，它照着做就行：
+
+```bash
+# 1. 定位 DSH：环境变量 → 本机监听端口 → 局域网扫描 → 手动填写
+node scripts/find-dsh.mjs
+
+# 2. 挂进 profile（先 dry-run 看改动，再 --write 落盘）
+node scripts/enable-in-profile.mjs --profile web --write
+
+# 3. 重启 dsh web，验证
+curl -s "$DSH_URL/api/dsh-billing-chip/state" -H "Origin: $DSH_URL"
+```
+
+`find-dsh.mjs` 认 DSH 的方式是两道指纹：未登录时 HTTP `401` + 正文 `dsh web authentication required; …`，或者登录后首页 HTML 里含 `__DSH_BOOT__`。扫局域网时它会自动跳过 docker / VPN 虚拟网卡，默认端口是 `3080, 3099, 3000, 8080, 8000`，都能用参数改。
+
+| 脚本 | 干什么 |
+| --- | --- |
+| `scripts/find-dsh.mjs` | 三级探测 DSH 地址：`--local` / `--lan` / `--url` / `--range` / `--ports` / `--manual` / `--json` |
+| `scripts/enable-in-profile.mjs` | 改 profile 的 `dependencies` 与 `dsh.profile.bundles` 并跑 `pnpm install`；默认 dry-run，`--write` 才落盘，改前自动备份 |
+
 ## 安装
 
 ### 作为 bundle 装进 profile（推荐）
