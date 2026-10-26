@@ -126,6 +126,14 @@ curl -s "$DSH_URL/api/dsh-billing-chip/state" -H "Origin: $DSH_URL"
 
 ## 安装
 
+一行（从 GitHub 源码安装，装进 `web` profile）：
+
+```bash
+dsh plugin --profile web add github:EuphonXD/dsh-billing-chip
+```
+
+装完要**把包名加进 profile 的 `dsh.profile.bundles`** 并重启 `dsh web`，细节见下面两节。
+
 ### 作为 bundle 装进 profile（推荐）
 
 ```bash
