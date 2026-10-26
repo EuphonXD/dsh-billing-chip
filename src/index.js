@@ -326,18 +326,36 @@ function isLoopback(req) {
 }
 
 /**
- * 浏览器发起的同源请求：Origin 必须存在且与 Host 一致。
- * 局域网里用 192.168.x.x:端口 打开 DSH 时就走这条路；
- * 而外部脚本没有 Origin，会被挡在门外（除非 allowRemote）。
+ * 判定请求是不是「DSH 页面自己发出来的」。
+ * 注意：同源的 GET 请求浏览器不会带 Origin（只有 POST/CORS 才带），
+ * 所以只看 Origin 会把局域网访问者全挡掉（真实踩过）。
+ * 现代浏览器都带 Sec-Fetch-Site：same-origin / same-site 才算页面自己发的；
+ * 老浏览器再退回 Origin == Host 的判断。
  */
 function isSameOrigin(req) {
+  const host = String(req.headers?.host || "");
+  const site = String(req.headers?.["sec-fetch-site"] || "").toLowerCase();
+  if (site === "same-origin" || site === "same-site") return true;
+  if (site === "cross-site") return false;
+  // 同源 GET 不带 Origin，但一定带 Referer（路径可能是 / 或 /dsh/ 之类的子路径）
+  const ref = req.headers?.referer;
+  if (ref) {
+    try {
+      if (new URL(ref).host === host) return true;
+    } catch {
+      /* ignore */
+    }
+  }
   const origin = req.headers?.origin;
-  if (!origin) return false;
-  try {
-    return new URL(origin).host === String(req.headers.host || "");
-  } catch {
+  if (origin) {
+    try {
+      if (new URL(origin).host === host) return true;
+    } catch {
+      /* ignore */
+    }
     return false;
   }
+  return false;
 }
 
 function sendJson(res, status, body) {

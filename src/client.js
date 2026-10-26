@@ -55,6 +55,9 @@ window.__ModuleLoader__.load({
 		const LS_COLLAPSED = "dsh-billing-chip:collapsed";
 
 		const CSS = `
+/* 配色直接取自桌宠 #chip（yufeng-pet/renderer/styles.css）：
+   深梦蓝渐变底 + 浅蓝模型名 + 暖黄主数字 + 奶油次要文字，
+   本轮进行中＝粉、结算瞬间＝金闪、平时＝奶油。 */
 .dbc-root {
   position: fixed;
   right: 16px;
@@ -62,68 +65,112 @@ window.__ModuleLoader__.load({
   z-index: 2147483000;
   font: 12px/1.45 var(--dsw-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-variant-numeric: tabular-nums;
-  color: var(--dsw-alias-label-primary, #0f1115);
+  color: #f6e7d3;
   user-select: none;
   -webkit-user-select: none;
 }
 .dbc-card {
   min-width: 158px;
   max-width: 264px;
-  padding: 7px 10px 8px;
-  border-radius: var(--dsw-radius-md, 10px);
-  background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 84%, transparent);
-  border: 1px solid var(--dsw-alias-border-l2, #0000001a);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, .12);
-  backdrop-filter: blur(12px) saturate(1.1);
+  padding: 5px 10px 6px 9px;
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(20, 31, 48, .92), rgba(11, 19, 34, .9));
+  border: 1px solid rgba(127, 208, 255, .28);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .06);
+  backdrop-filter: blur(6px);
+  color: #f6e7d3;
   cursor: grab;
+  transition: border-color .2s, transform .15s;
 }
+.dbc-card:hover { border-color: rgba(127, 208, 255, .6); }
 .dbc-card:active { cursor: grabbing; }
-.dbc-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
-.dbc-model { overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-secondary, #61666b); }
+.dbc-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dbc-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #bfeaff;
+  font-size: 10.5px;
+}
 .dbc-badge {
   margin-left: auto;
   padding: 0 4px;
   border-radius: 4px;
-  font-size: 10px;
-  line-height: 15px;
-  color: var(--dsw-alias-label-tertiary, #81858c);
-  border: 1px solid var(--dsw-alias-border-l2, #0000001a);
+  font-size: 9px;
+  line-height: 14px;
+  color: #6fd3a8;
+  border: 1px solid rgba(111, 211, 168, .45);
 }
 .dbc-badge[data-peak="1"] {
-  color: var(--dsw-alias-state-warn-primary, #f59e0b);
-  border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 45%, transparent);
+  color: #e8a33d;
+  border-color: rgba(232, 163, 61, .5);
 }
-.dbc-main { margin-top: 2px; font-size: 15px; font-weight: 600; letter-spacing: .2px; }
-.dbc-main .dbc-cur { font-size: 11px; font-weight: 400; color: var(--dsw-alias-label-tertiary, #81858c); margin-right: 4px; }
-.dbc-sub { margin-top: 1px; display: flex; gap: 10px; color: var(--dsw-alias-label-secondary, #61666b); }
+.dbc-main {
+  margin-top: 1px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: #ffe1a8;
+  transition: color .2s;
+}
+.dbc-main .dbc-cur {
+  font-size: 9.5px;
+  font-weight: 400;
+  color: rgba(246, 231, 211, .62);
+  margin-right: 4px;
+  letter-spacing: 0;
+}
+/* 桌宠：还在涨（估算）→ 粉 */
+.dbc-main[data-state="estimated"] {
+  color: #ffb3d1;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(255, 150, 200, .5);
+}
+/* 桌宠：刚结算 → 金闪 */
+.dbc-main[data-state="spent"] {
+  color: #ffd873;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(255, 190, 80, .65);
+  animation: dbcTurnGlow 1.6s ease-in-out infinite;
+}
+@keyframes dbcTurnGlow { 0%, 100% { opacity: 1 } 50% { opacity: .7 } }
+.dbc-main[data-state="idle"] { color: rgba(246, 231, 211, .45); font-weight: 400; }
+.dbc-sub {
+  margin-top: 1px;
+  display: flex;
+  gap: 8px;
+  font-size: 9.5px;
+  color: rgba(246, 231, 211, .62);
+}
 .dbc-sub span { white-space: nowrap; }
-.dbc-err { color: var(--dsw-alias-state-error-primary, #ec1313); font-size: 11px; margin-top: 2px; }
+.dbc-balance { color: rgba(246, 231, 211, .62); }
+.dbc-balance[data-ok="1"] { color: #ffe1a8; font-weight: 600; }
+.dbc-err { color: #ff9d94; font-size: 10.5px; margin-top: 2px; }
 .dbc-menu {
   position: fixed;
   z-index: 2147483001;
   min-width: 158px;
   padding: 4px;
-  border-radius: var(--dsw-radius-md, 10px);
-  background: var(--dsw-alias-bg-base, #fff);
-  border: 1px solid var(--dsw-alias-border-l2, #0000001a);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, .16);
-  color: var(--dsw-alias-label-primary, #0f1115);
+  border-radius: 13px;
+  background: rgba(11, 19, 34, .96);
+  border: 1px solid rgba(127, 208, 255, .3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  color: #f6e7d3;
   font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
 }
 .dbc-item {
   padding: 5px 9px;
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
-  color: var(--dsw-alias-label-primary, #0f1115);
+  color: #f6e7d3;
 }
-.dbc-item:hover { background: var(--dsw-alias-interactive-bg-hover, #2631480f); }
-.dbc-sep { height: 1px; margin: 4px 6px; background: var(--dsw-alias-border-l2, #0000001a); }
+.dbc-item:hover { background: rgba(127, 208, 255, .12); }
+.dbc-sep { height: 1px; margin: 4px 6px; background: rgba(127, 208, 255, .18); }
 .dbc-overlay {
   position: fixed;
   inset: 0;
   z-index: 2147483002;
-  background: rgba(0, 0, 0, .28);
+  background: rgba(3, 8, 16, .55);
 }
 .dbc-dialog {
   position: fixed;
@@ -131,51 +178,51 @@ window.__ModuleLoader__.load({
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 330px;
+  width: 340px;
   padding: 15px 16px 13px;
-  border-radius: var(--dsw-radius-lg, 12px);
-  background: var(--dsw-alias-bg-base, #fff);
-  border: 1px solid var(--dsw-alias-border-l2, #0000001a);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, .22);
-  color: var(--dsw-alias-label-primary, #0f1115);
+  border-radius: 13px;
+  background: rgba(11, 19, 34, .97);
+  border: 1px solid rgba(127, 208, 255, .3);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .5);
+  color: #f6e7d3;
   font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
 }
-.dbc-dialog h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
-.dbc-dialog p { margin: 0 0 10px; font-size: 11.5px; color: var(--dsw-alias-label-tertiary, #81858c); }
+.dbc-dialog h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: #bfeaff; }
+.dbc-dialog p { margin: 0 0 10px; font-size: 11.5px; color: rgba(246, 231, 211, .6); }
 .dbc-input {
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
   border-radius: 7px;
-  border: 1px solid var(--dsw-alias-border-l3, #00000033);
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-3, #fff) 92%, transparent);
-  color: var(--dsw-alias-label-primary, #0f1115);
+  border: 1px solid rgba(127, 208, 255, .3);
+  background: rgba(12, 22, 34, .6);
+  color: #f6e7d3;
   font: 12px/1.4 var(--dsw-font-family-code, ui-monospace, Menlo, Consolas, monospace);
   outline: none;
 }
-.dbc-input:focus { border-color: var(--dsw-alias-brand-primary, #0f1115); }
+.dbc-input:focus { border-color: rgba(127, 208, 255, .65); }
 .dbc-actions { margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end; }
 .dbc-btn {
   padding: 4px 12px;
   border-radius: 7px;
-  border: 1px solid var(--dsw-alias-border-l2, #0000001a);
+  border: 1px solid rgba(127, 208, 255, .25);
   background: transparent;
-  color: inherit;
+  color: rgba(246, 231, 211, .85);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
-.dbc-btn:hover { background: var(--dsw-alias-interactive-bg-hover, #2631480f); }
+.dbc-btn:hover { background: rgba(127, 208, 255, .12); color: #f6e7d3; }
 .dbc-btn[data-primary="1"] {
-  border-color: transparent;
-  background: var(--dsw-alias-brand-primary, #0f1115);
-  color: var(--dsw-alias-label-primary-foreground, #fff);
+  border-color: rgba(127, 208, 255, .45);
+  background: rgba(127, 208, 255, .16);
+  color: #bfeaff;
 }
-.dbc-btn[data-primary="1"]:hover { background: var(--dsw-alias-brand-primary, #0f1115); opacity: .9; }
+.dbc-btn[data-primary="1"]:hover { background: rgba(127, 208, 255, .24); }
 .dbc-btn[data-primary="1"]:disabled { opacity: .5; cursor: default; }
-.dbc-msg { margin-top: 8px; font-size: 11px; min-height: 14px; color: var(--dsw-alias-label-tertiary, #81858c); }
-.dbc-msg[data-kind="err"] { color: var(--dsw-alias-state-error-primary, #ec1313); }
-.dbc-msg[data-kind="ok"] { color: var(--dsw-alias-state-success-primary, #22c55e); }
+.dbc-msg { margin-top: 8px; font-size: 11px; min-height: 14px; color: rgba(246, 231, 211, .55); }
+.dbc-msg[data-kind="err"] { color: #ff9d94; }
+.dbc-msg[data-kind="ok"] { color: #6fd3a8; }
 `;
 
 		// ---------------------------------------------------------------------
@@ -208,6 +255,20 @@ window.__ModuleLoader__.load({
 			if (!b) return null;
 			const sym = String(b.currency || "CNY").toUpperCase() === "CNY" ? "¥" : "";
 			return `${sym}${fmtMoney(b.total, 2)}`;
+		}
+
+		// 与桌宠牌子完全一致的金额刻度：>=1 两位、>=0.01 三位、更小四位
+		function money4(v) {
+			const n = Number(v);
+			if (!Number.isFinite(n)) return "--";
+			if (n >= 1) return n.toFixed(2);
+			if (n >= 0.01) return n.toFixed(3);
+			return n.toFixed(4);
+		}
+
+		function money2(v) {
+			const n = Number(v);
+			return Number.isFinite(n) ? n.toFixed(2) : "--";
 		}
 
 		async function api(path, body) {
@@ -265,7 +326,7 @@ window.__ModuleLoader__.load({
 
 			const subEl = el("div", "dbc-sub");
 			const todayEl = el("span", "", "今日 —");
-			const balanceEl = el("span", "", "余额 —");
+			const balanceEl = el("span", "dbc-balance", "余额 —");
 			subEl.append(todayEl, balanceEl);
 
 			const errEl = el("div", "dbc-err");
@@ -312,6 +373,9 @@ window.__ModuleLoader__.load({
 			// ---- 状态渲染 ----
 			let last = null;
 			let lastError = null;
+			let lastTurnDone = null;
+			let spentUntil = 0;
+			let flashTimer = null;
 			let timer = null;
 			let inFlight = false;
 
@@ -323,18 +387,34 @@ window.__ModuleLoader__.load({
 				badgeEl.dataset.peak = peak ? "1" : "0";
 				badgeEl.title = peak ? "高峰时段：价格翻倍" : "谷时价";
 
-				const turnCost = state.turn?.cost;
-				turnEl.textContent = Number.isFinite(turnCost) ? `¥${fmtMoney(turnCost, 4)}` : "¥—";
-				const turnTokens = state.turn?.usage?.totalTokens;
-				mainEl.title = Number.isFinite(turnTokens)
-					? `本轮 #${state.turn.index} · ${fmtTokens(turnTokens)} tokens`
+				const turn = state.turn || {};
+				const usage = turn.usage || {};
+				const turnCost = Number(turn.cost);
+				const hasTurn = Number.isFinite(turnCost) && Number(usage.totalTokens) > 0;
+				const done = turn.done === true;
+				// 桌宠口径：轮次还在跑 = 粉色 ≈（估算中）；刚结算完 = 金色闪一下；之后回奶油色
+				if (hasTurn) turnEl.textContent = (done ? "¥" : "≈ ¥") + money4(turnCost);
+				else turnEl.textContent = "本轮 --";
+				if (hasTurn && done && lastTurnDone === false) {
+					spentUntil = Date.now() + 2400;
+					clearTimeout(flashTimer);
+					flashTimer = setTimeout(() => render(last), 2450);
+				}
+				lastTurnDone = done;
+				const flashing = spentUntil > Date.now();
+				mainEl.dataset.state = !hasTurn ? "idle" : !done ? "estimated" : flashing ? "spent" : "";
+				const turnTokens = usage.totalTokens;
+				mainEl.title = hasTurn
+					? `本轮 #${turn.index} · ${fmtTokens(turnTokens)} tokens · ${done ? "已结算" : "进行中（估算）"}`
+						+ ` · 输入 ${fmtTokens(usage.inputTokens)} / 缓存 ${fmtTokens(usage.cacheReadTokens)} / 输出 ${fmtTokens(usage.outputTokens)}`
 					: "本轮还没有用量";
 
-				todayEl.textContent = `今日 ¥${fmtMoney(state.today?.cost, 4)}`;
+				todayEl.textContent = `今日 ¥${money2(state.today?.cost)}`;
 				todayEl.title = `今日 ${fmtTokens(state.today?.tokens)} tokens / ${state.today?.messages ?? 0} 次响应`;
 
 				const bal = fmtBalance(state.balance);
 				if (bal) {
+					balanceEl.dataset.ok = "1";
 					balanceEl.textContent = `余额 ${bal}`;
 					balanceEl.title =
 						state.balance?.available === false
@@ -345,12 +425,15 @@ window.__ModuleLoader__.load({
 									? "Key 来自插件配置"
 									: "Key 来自本机设置文件";
 				} else if (state.hasKey && state.balanceError) {
+					balanceEl.dataset.ok = "0";
 					balanceEl.textContent = "余额 —";
 					balanceEl.title = state.balanceError;
 				} else if (!state.hasKey) {
+					balanceEl.dataset.ok = "0";
 					balanceEl.textContent = "余额 未设置";
 					balanceEl.title = "右键 → 输入 API Key 后显示余额";
 				} else {
+					balanceEl.dataset.ok = "0";
 					balanceEl.textContent = "余额 …";
 				}
 
