@@ -392,9 +392,16 @@ window.__ModuleLoader__.load({
 				const turnCost = Number(turn.cost);
 				const hasTurn = Number.isFinite(turnCost) && Number(usage.totalTokens) > 0;
 				const done = turn.done === true;
-				// 桌宠口径：轮次还在跑 = 粉色 ≈（估算中）；刚结算完 = 金色闪一下；之后回奶油色
-				if (hasTurn) turnEl.textContent = (done ? "¥" : "≈ ¥") + money4(turnCost);
-				else turnEl.textContent = "本轮 --";
+
+				// 流式预估（host 订阅 assistant 流算出来的，不受日志落盘延迟影响）
+				const live = state.live || null;
+				const liveActive = Boolean(live && live.active === true);
+				const liveEst =
+					live && live.hasEst !== false && Number.isFinite(live.estCost) && live.estCost > 0.0001
+						? live.estCost
+						: null;
+				const liveActual = live && Number.isFinite(live.actualCost) ? live.actualCost : null;
+
 				if (hasTurn && done && lastTurnDone === false) {
 					spentUntil = Date.now() + 2400;
 					clearTimeout(flashTimer);
@@ -402,12 +409,45 @@ window.__ModuleLoader__.load({
 				}
 				lastTurnDone = done;
 				const flashing = spentUntil > Date.now();
-				mainEl.dataset.state = !hasTurn ? "idle" : !done ? "estimated" : flashing ? "spent" : "";
-				const turnTokens = usage.totalTokens;
-				mainEl.title = hasTurn
-					? `本轮 #${turn.index} · ${fmtTokens(turnTokens)} tokens · ${done ? "已结算" : "进行中（估算）"}`
-						+ ` · 输入 ${fmtTokens(usage.inputTokens)} / 缓存 ${fmtTokens(usage.cacheReadTokens)} / 输出 ${fmtTokens(usage.outputTokens)}`
-					: "本轮还没有用量";
+
+				// 桌宠口径：跑着 = 粉色 ≈（估算中）；刚结算 = 金色闪一下；稳住 = 奶油
+				// 另外：跑着优先用流式预估，结算后把"实际 · 预估"并排显示
+				let mainState = "idle";
+				let text = "本轮 --";
+				if (liveActive && liveEst !== null) {
+					text = "≈ ¥" + money4(liveEst);
+					mainState = "estimated";
+				} else if (done) {
+					const actual = liveActual !== null ? liveActual : turnCost;
+					text = Number.isFinite(actual) ? "¥" + money4(actual) : "本轮 --";
+					// 预估和实际差不到 3% 就不啰嗦了，只显示实际
+					if (liveEst !== null && Number.isFinite(actual) && Math.abs(liveEst - actual) / Math.max(actual, 1e-6) >= 0.03) {
+						text += " · ≈¥" + money2(liveEst);
+					}
+					mainState = flashing ? "spent" : "";
+				} else if (hasTurn) {
+					text = "≈ ¥" + money4(turnCost);
+					mainState = "estimated";
+				} else if (liveEst !== null && liveEst > 0) {
+					text = "≈ ¥" + money4(liveEst);
+					mainState = "estimated";
+				}
+				turnEl.textContent = text;
+				mainEl.dataset.state = mainState;
+
+				const tips = [];
+				if (hasTurn) tips.push(`本轮 #${turn.index} · ${fmtTokens(usage.totalTokens)} tokens`);
+				if (live && Number.isFinite(live.turn)) {
+					tips.push(`流式 #${live.turn}${live.active ? " 进行中" : " 已停"}`);
+				}
+				if (liveEst !== null) {
+					tips.push(`预估 ≈¥${money4(liveEst)}（${live.chars} 字符 ≈ 输出 ${fmtTokens(live.estOut)} tokens）`);
+				}
+				if (liveActual !== null) tips.push(`实际 ¥${money4(liveActual)}`);
+				if (hasTurn) {
+					tips.push(`输入 ${fmtTokens(usage.inputTokens)} / 缓存 ${fmtTokens(usage.cacheReadTokens)} / 输出 ${fmtTokens(usage.outputTokens)}`);
+				}
+				mainEl.title = tips.length ? tips.join(" · ") : "本轮还没有用量";
 
 				todayEl.textContent = `今日 ¥${money2(state.today?.cost)}`;
 				todayEl.title = `今日 ${fmtTokens(state.today?.tokens)} tokens / ${state.today?.messages ?? 0} 次响应`;

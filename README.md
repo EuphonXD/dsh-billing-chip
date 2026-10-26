@@ -14,11 +14,18 @@ DSH 每一轮对话都会把 `usage`（输入 / 缓存命中 / 缓存写入 / �
 $DSH_HOME/sessions/<workspace>/<session-id>/session.v4.jsonl.zstd
 ```
 
-这个插件**只读这些日志文件**，然后用 DeepSeek 官方价换算出钱：
+日志写盘有 **1–5 分钟延迟**，光靠它算不出"正在涨的钱"。所以插件挂了两条腿：
+
+| 数据源 | 拿到什么 | 延迟 |
+| --- | --- | --- |
+| 会话日志 `session.v4.jsonl.zstd` | 已结算的 usage、模型、turn 边界、今日汇总 | 1–5 分钟 |
+| assistant 流（进程内 `sessionController.follow` + `assistantStream`） | 正在生成的思考/正文增量，用来实时估钱 | 立刻 |
+
+两条腿合并成一块牌子：
 
 | 项目 | 说明 |
 | --- | --- |
-| 本轮 | 最后一个 turn 的累计花费（每来一次 `assistant/message` 就涨一点）。轮次没结束时显示 `≈ ¥`（粉色，估算中），`turn/end` 一到就换成精确值并金色闪一下 |
+| 本轮 | 跑着的时候用流式预估（粉色 `≈ ¥`，实时在涨）；`turn/end` 一到换成本轮实际花费，预估和实际差 ≥3% 时并排显示 `¥实际 · ≈¥预估` |
 | 今日 | 今天所有会话加起来的花费与 token 数（跨 workspace、跨 session 汇总） |
 | 余额 | 调 `GET https://api.deepseek.com/user/balance`，显示 CNY 可用余额 |
 
@@ -30,7 +37,20 @@ $DSH_HOME/sessions/<workspace>/<session-id>/session.v4.jsonl.zstd
 - 失败不覆盖旧值：网络抖动或 Key 失效时，牌子上继续显示上一次成功的结果
 | 峰 / 谷 | 北京时间工作日 09:00–12:00、14:00–18:00 为高峰（价格翻倍）；周末与法定节假日全天按谷时价 |
 
-它不订阅任何内部事件、不碰未公开 API，因此 DSH 升级后只要日志格式不变就还能用。
+订阅流走的是 DSH 自己的 `sessionController.follow()`（cordis service，没装就自动退回只读日志），不抓 cookie、不碰私有 HTTP 端点。
+
+## 实时预估怎么算
+
+和桌宠的计费牌同一套算法（`bridge.mjs` 的 `estAdd` / `estEmit`）：
+
+1. 跟随当前活跃会话的 assistant 流，收 `reasoning-delta` / `text-delta` 的每一段文字（思考内容也算，它是要计费的）
+2. 字符折算输出 token：**汉字 0.6 token/字，其他字符 0.3 token/字**
+3. 输出侧取 `max(本轮已结算 output, 字符估算)` —— 真实值到了就以真实值为准
+4. 输入侧用本轮已结算的 `cacheRead` + `uncachedInput`；这一步还没结算时，退回上一次请求的量级（每步都重发全量上下文，量级接近）
+5. 套官方价（峰/谷）算出金额，每来一段增量就重算
+
+实测（`deepseek-flash`，让模型写 600 字散文）：流式期间涨到 `≈ ¥0.0126`，结算后实际 `¥0.0126`，**误差 0%**。
+多 step 的轮次（中间调工具）按同一个 turn 累加字符，不会被每次工具调用打断。
 
 ## 显示
 
@@ -42,12 +62,13 @@ deepseek-flash      峰
 
 配色和金额刻度与桌宠的计费牌一致：深梦蓝渐变卡、模型名浅蓝 `#bfeaff`、本轮数字暖黄 `#ffe1a8`、次要信息奶油色 62%。
 
-本轮有三种状态：
+本轮有这几种状态：
 
 | 状态 | 文案 | 颜色 |
 | --- | --- | --- |
-| 轮次进行中 | `≈ ¥0.0123` | 粉 `#ffb3d1`（还在涨，属估算） |
-| 刚结算 | `¥0.0123` | 金 `#ffd873`，闪 2.4 秒 |
+| 轮次进行中 | `≈ ¥0.0123` | 粉 `#ffb3d1`（实时流式预估） |
+| 刚结算，预估和实际差 ≥3% | `¥0.0123 · ≈¥0.0110` | 金 `#ffd873`，闪 2.4 秒 |
+| 刚结算，两者接近 | `¥0.0123` | 金 `#ffd873`，闪 2.4 秒 |
 | 已结束 | `¥0.0123` | 奶油 `#f6e7d3` |
 
 小数位按桌宠的 `money4` 规则：≥1 两位、≥0.01 三位、更小四位；今日与余额固定两位。
@@ -168,7 +189,7 @@ profile 的 `package.json` 应该长这样：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/api/dsh-billing-chip/state` | 模型、本轮、今日、余额、界面偏好 |
+| GET | `/api/dsh-billing-chip/state` | 模型、本轮（日志口径 `turn`）、实时预估（`live`）、今日、余额、界面偏好 |
 | POST | `/api/dsh-billing-chip/key` | `{ "apiKey": "sk-..." }` 保存并立即验证；空串等于清除 |
 | POST | `/api/dsh-billing-chip/refresh` | 重新拉余额 |
 | POST | `/api/dsh-billing-chip/ui` | `{ "position": {x,y}, "collapsed": bool }` 记界面偏好 |
@@ -184,6 +205,9 @@ profile 的 `package.json` 应该长这样：
             "usage": { "inputTokens": 117045, "cacheReadTokens": 6781184,
                        "cacheWriteTokens": 0, "outputTokens": 31347,
                        "totalTokens": 6929576 } },
+  "live": { "turn": 2, "step": 1, "active": true, "chars": 776.4,
+            "estCost": 0.0121, "estTokens": 35624, "estOut": 1062,
+            "actualCost": null, "frames": 918, "lastType": "stream:chunk" },
   "today": { "date": "2026-10-26", "cost": 2.03, "tokens": 25371513, "messages": 259 },
   "peak": true,
   "sessions": 5,

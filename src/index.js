@@ -396,6 +396,271 @@ export function apply(ctx, config) {
   let balanceInflight = null; // Promise | null
   let refreshedTurn = null; // 已因"本轮结束"刷过余额的 turn 标记
 
+  // -------------------------------------------------------------------------
+  // 流式预估（和桌宠同一条路）
+  //
+  // 会话日志落盘有 1–5 分钟延迟，只读日志永远算不出"正在涨的钱"。
+  // 所以这里订阅 DSH 的 assistant 流（sessionController.follow + assistantStream），
+  // 把 reasoning / 正文的增量按字符折算成输出 token：
+  //   汉字 0.6 token/字，其他字符 0.3 token/字
+  // 输入侧用最近一次请求真实的 cacheRead / uncachedInput，输出侧取
+  // max(真实已结算 output, 字符估算)，这样流式期间就能给出接近最终值的预估。
+  // -------------------------------------------------------------------------
+  const live = {
+    sessionId: null,
+    turn: null,
+    step: null,
+    units: 0, // 字符估算累计
+    active: false,
+    startedAt: 0,
+    lastAt: 0,
+    inTok: 0, // 本轮已结算的真实 input（uncached）
+    cacheTok: 0, // 本轮已结算的真实 cacheRead
+    outTok: 0, // 本轮已结算的真实 output
+    lastIn: 0, // 最近一次请求的 input（估输入侧用）
+    lastCache: 0, // 最近一次请求的 cacheRead
+    frames: 0, // 收到过多少帧（诊断用）
+    lastType: null, // 最近一帧的类型（诊断用）
+    error: null, // follow 的最近一次错误（诊断用）
+    frozenEst: null, // 本轮最后一刻的预估成本
+  };
+  let followAbort = null;
+  let followTimer = null;
+  let followController = null;
+  let lastRestart = 0;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function resetLive(id, turn, step) {
+    const sameTurn = live.turn !== null && Number.isFinite(turn) && turn === live.turn;
+    live.sessionId = id || live.sessionId;
+    live.turn = Number.isFinite(turn) ? turn : live.turn;
+    live.step = Number.isFinite(step) ? step : null;
+    if (!sameTurn) {
+      live.units = 0;
+      live.inTok = 0;
+      live.cacheTok = 0;
+      live.outTok = 0;
+      live.frozenEst = null; // 本轮"最后一刻的预估"，结算后拿来和实际对比
+    }
+    live.active = true;
+    live.startedAt = Date.now();
+    live.lastAt = Date.now();
+  }
+
+  function addUnits(text) {
+    if (!text) return;
+    let u = 0;
+    for (const ch of String(text)) u += /[\u3400-\u9fff]/.test(ch) ? 0.6 : 0.3;
+    if (u <= 0) return;
+    live.units += u;
+    live.lastAt = Date.now();
+  }
+
+  function onFrame(id, frame) {
+    if (!frame || typeof frame !== "object") return;
+    live.frames += 1;
+    live.lastType = frame.type === "assistant-stream" ? `stream:${frame.frame?.type}` : String(frame.type);
+    if (frame.type === "snapshot") {
+      // 连上时可能已有正在生成的 attempt —— 用 baseline 把"半个回合"接上
+      const at = frame.assistantStream?.activeAttempt;
+      if (at) {
+        resetLive(id, Number(at.turn), Number(at.step));
+        for (const item of at.stream || []) {
+          const c = item && typeof item === "object" ? (item.chunk ?? item) : null;
+          if (!c || typeof c !== "object") continue;
+          const t = c.type;
+          if (t === "reasoning-delta" || t === "thinking-delta" || t === "text-delta") {
+            addUnits(c.text ?? c.delta ?? c.reasoning ?? "");
+          }
+        }
+      }
+      return;
+    }
+    if (frame.type === "assistant-stream") {
+      const f = frame.frame || {};
+      if (f.type === "start") {
+        resetLive(id, Number(f.turn), Number(f.step));
+      } else if (f.type === "chunk") {
+        const c = f.chunk;
+        if (c && typeof c === "object") {
+          const t = c.type;
+          if (t === "reasoning-delta" || t === "thinking-delta" || t === "text-delta") {
+            addUnits(c.text ?? c.delta ?? c.reasoning ?? "");
+          }
+        }
+      } else if (f.type === "end") {
+        live.active = false;
+      }
+      return;
+    }
+    // durable 事件被包了一层：{ type: 'event', event: { type, seq, time, data } }
+    const ev = frame.type === "event" ? frame.event : frame;
+    if (ev?.type === "assistant/message") {
+      const usage = ev.data?.usage;
+      if (!usage) return;
+      const turn = Number(ev.data?.turn);
+      const missIn = Number(usage.uncachedInputTokens ?? usage.inputTokens) || 0;
+      const hitCache = Number(usage.cacheReadTokens) || 0;
+      live.lastIn = missIn;
+      live.lastCache = hitCache;
+      if (live.turn !== null && Number.isFinite(turn) && turn === live.turn) {
+        live.inTok += missIn;
+        live.cacheTok += hitCache;
+        live.outTok += Number(usage.outputTokens) || 0;
+      }
+      return;
+    }
+    if (ev?.type === "turn/start") {
+      const turn = Number(ev.data?.turn);
+      if (live.turn !== null && Number.isFinite(turn) && turn !== live.turn) {
+        live.units = 0;
+        live.inTok = 0;
+        live.cacheTok = 0;
+        live.outTok = 0;
+      }
+      return;
+    }
+    if (ev?.type === "turn/end") {
+      const turn = Number(ev.data?.turn);
+      if (live.turn !== null && Number.isFinite(turn) && turn === live.turn) live.active = false;
+    }
+  }
+
+  /** 当前最新的会话（按日志 mtime）。 */
+  function pickSession() {
+    try {
+      const logs = listLogs(sessionsRoot()).sort((a, b) => b.mtimeMs - a.mtimeMs);
+      if (!logs.length) return null;
+      return { id: basename(dirname(logs[0].file)), file: logs[0].file };
+    } catch {
+      return null;
+    }
+  }
+
+  async function followLoop(controller, signal) {
+    while (!signal.aborted) {
+      const pick = pickSession();
+      if (!pick) {
+        await sleep(5000);
+        continue;
+      }
+      if (live.sessionId !== pick.id) {
+        // 换了会话，上一轮的残留全部清掉
+        live.sessionId = pick.id;
+        live.turn = null;
+        live.step = null;
+        live.units = 0;
+        live.inTok = 0;
+        live.cacheTok = 0;
+        live.outTok = 0;
+        live.lastIn = 0;
+        live.lastCache = 0;
+        live.frozenEst = null;
+        live.active = false;
+      }
+      try {
+        const request = {
+          address: { kind: "session", sessionId: pick.id },
+          assistantStream: true,
+          maxMessages: 8,
+        };
+        for await (const frame of controller.follow(request, signal)) {
+          if (signal.aborted) return;
+          onFrame(pick.id, frame);
+        }
+      } catch (error) {
+        if (!signal.aborted) {
+          live.error = error?.message || String(error);
+          ctx.logger?.warn?.("dsh-billing-chip: follow 断了：%s", live.error);
+        }
+      }
+      if (!signal.aborted) await sleep(1500);
+    }
+  }
+
+  function stopFollow() {
+    if (followTimer) {
+      clearInterval(followTimer);
+      followTimer = null;
+    }
+    try {
+      followAbort?.abort();
+    } catch {
+      /* ignore */
+    }
+    followAbort = null;
+  }
+
+  /** 换个会话重连（用户切会话时用）。 */
+  function restartFollow() {
+    if (!followController?.follow || !followAbort) return;
+    if (Date.now() - lastRestart < 2000) return;
+    lastRestart = Date.now();
+    const old = followAbort;
+    followAbort = new AbortController();
+    try {
+      old?.abort();
+    } catch {
+      /* ignore */
+    }
+    void followLoop(followController, followAbort.signal);
+  }
+
+  function startFollow(controller) {
+    if (followAbort || !controller?.follow) return;
+    followController = controller;
+    followAbort = new AbortController();
+    void followLoop(controller, followAbort.signal);
+    // 用户切到别的会话时跟着换
+    followTimer = setInterval(() => {
+      const pick = pickSession();
+      if (pick && live.sessionId && pick.id !== live.sessionId) restartFollow();
+    }, 5000);
+  }
+
+  /** 把 live 状态折算成预估（和桌宠的 estEmit 同一套公式）。 */
+  function liveView(model, peak, overrides, prev) {
+    const estOut = Math.max(1, live.outTok, Math.ceil(live.units));
+    // 输入侧：优先本轮已结算的真实值，其次最近一次请求，最后退回上一轮的输入量
+    const inTok = live.inTok || live.lastIn || Number(prev?.inTok) || 0;
+    const cacheTok = live.cacheTok || live.lastCache || Number(prev?.cacheTok) || 0;
+    const c = costOf(
+      { inputTokens: inTok, cacheReadTokens: cacheTok, cacheWriteTokens: 0, outputTokens: estOut },
+      model,
+      peak,
+      overrides,
+    );
+    const hasAny = live.units > 0 || live.outTok > 0 || live.inTok > 0 || live.lastIn > 0;
+    // 流还在跑 → 一直记住"最后一刻的预估"，结算后拿来和实际对比
+    if (live.active && hasAny) live.frozenEst = c.cost;
+    const shownEst = live.active ? c.cost : live.frozenEst ?? (hasAny ? c.cost : null);
+    return {
+      sessionId: live.sessionId,
+      turn: live.turn,
+      step: live.step,
+      active: live.active,
+      hasEst: hasAny,
+      idleMs: live.lastAt ? Date.now() - live.lastAt : null,
+      chars: Math.round(live.units * 10) / 10,
+      estTokens: inTok + cacheTok + estOut,
+      estCost: hasAny ? shownEst : null,
+      estOut,
+      frames: live.frames,
+      lastType: live.lastType,
+      error: live.error,
+      actualTokens: live.inTok + live.cacheTok + live.outTok,
+      actualCost: live.outTok > 0 || live.inTok > 0
+        ? costOf(
+            { inputTokens: live.inTok, cacheReadTokens: live.cacheTok, cacheWriteTokens: 0, outputTokens: live.outTok },
+            model,
+            peak,
+            overrides,
+          ).cost
+        : null,
+    };
+  }
+
   /**
    * 余额刷新策略：
    *  - 缓存过期（BALANCE_MS）→ 后台重新拉一次，本次先返回旧值，界面不会突然变成 "…"
@@ -424,7 +689,20 @@ export function apply(ctx, config) {
     const root = sessionsRoot();
     const logs = listLogs(root).sort((a, b) => b.mtimeMs - a.mtimeMs);
     const key = `${resolved.source}:${resolved.key.length}|${logs.map((l) => `${l.file}:${l.size}:${l.mtimeMs}`).join("|")}`;
-    if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.value;
+    if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) {
+      // 日志没变，但流式预估一直在动 —— 缓存里只留日志口径，live 每次现算
+      return {
+        ...cache.value,
+        at: Date.now(),
+        live: liveView(cache.value.model, cache.value.peak, settings.priceOverrides, prevUsage),
+      };
+    }
+
+    // 日志里最新改动的会话和正在跟的不是同一个 → 说明用户切了会话，立刻重连
+    if (logs.length > 0) {
+      const newest = basename(dirname(logs[0].file));
+      if (live.sessionId && newest !== live.sessionId) restartFollow();
+    }
 
     const today = bjDate();
     const dayStart = Date.parse(`${today}T00:00:00+08:00`);
@@ -452,6 +730,17 @@ export function apply(ctx, config) {
       }
       if (!current || parsed.lastTime > current.lastTime) current = parsed;
     }
+
+    // 预估输入侧的兜底：本轮之前最后一个 turn 的请求量（每步都重发全量上下文，量级接近）
+    const prevUsage = (() => {
+      if (!current) return null;
+      const ids = [...current.turns.keys()]
+        .filter((t) => live.turn === null || t < live.turn)
+        .sort((a, b) => a - b);
+      const u = ids.length > 0 ? current.turns.get(ids[ids.length - 1]) : null;
+      if (!u) return null;
+      return { inTok: Number(u.inputTokens) || 0, cacheTok: Number(u.cacheReadTokens) || 0 };
+    })();
 
     // 本轮：当前日志里最后一个 turn 的用量
     let turn = null;
@@ -491,6 +780,7 @@ export function apply(ctx, config) {
       model: model || cfg.defaultModel || "未知模型",
       provider: current?.provider || null,
       turn,
+      live: null, // 下面补
       today: { date: today, cost: todayCost, tokens: todayTokens, messages: todayTurns },
       peak: isPeak(),
       sessions: todayLogs.length,
@@ -502,8 +792,19 @@ export function apply(ctx, config) {
       ui: settings.ui,
     };
     cache = { key, at: Date.now(), value };
-    return value;
+    return {
+      ...value,
+      live: liveView(value.model, value.peak, settings.priceOverrides, prevUsage),
+    };
   }
+
+  // 装了 sessionController 就订阅 assistant 流做实时预估；没装就退回只读日志
+  ctx.inject(["sessionController"], (child) => {
+    child.effect(() => {
+      startFollow(child.sessionController ?? child.get("sessionController"));
+      return () => stopFollow();
+    }, "dsh-billing-chip: live follow");
+  });
 
   const routes = [
     {
