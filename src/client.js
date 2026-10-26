@@ -14,7 +14,42 @@ window.__ModuleLoader__.load({
 
 		const name = "dsh-billing-chip-client";
 		const inject = [];
-		const API = "/api/dsh-billing-chip";
+		// DSH 可能挂在子路径下（例如 nginx 把 3080 反代到 /dsh/），
+		// 这时绝对路径 /api/… 会打到反代的 catch-all 上去，拿回一段 HTML 404。
+		// 所以接口地址要相对"当前部署的根"来算：优先用前端自己加载 /assets/ 的前缀。
+		function detectBase() {
+			try {
+				const boot = window.__DSH_BOOT__;
+				const declared =
+					(typeof boot?.basePath === "string" && boot.basePath) ||
+					(typeof boot?.base === "string" && boot.base);
+				if (declared) {
+					const p = declared.startsWith("/") ? declared : `/${declared}`;
+					return p.endsWith("/") ? p : `${p}/`;
+				}
+			} catch {
+				/* boot 不存在就算了 */
+			}
+			try {
+				const nodes = document.querySelectorAll('script[src], link[rel="stylesheet"][href]');
+				for (const node of nodes) {
+					const raw = node.getAttribute("src") || node.getAttribute("href") || "";
+					if (!raw.includes("assets/")) continue;
+					const url = new URL(raw, location.href);
+					const m = url.pathname.match(/^(.*?)\/assets\//);
+					if (m) return `${m[1]}/`;
+				}
+			} catch {
+				/* 忽略 */
+			}
+			const path = location.pathname;
+			if (path.endsWith("/")) return path;
+			const last = path.slice(path.lastIndexOf("/") + 1);
+			return last.includes(".") ? path.slice(0, path.lastIndexOf("/") + 1) : `${path}/`;
+		}
+
+		const BASE = detectBase();
+		const API = `${BASE.replace(/\/$/, "")}/api/dsh-billing-chip`;
 		const POLL_MS = 3000;
 		const LS_POS = "dsh-billing-chip:pos";
 		const LS_COLLAPSED = "dsh-billing-chip:collapsed";
@@ -190,6 +225,13 @@ window.__ModuleLoader__.load({
 			try {
 				data = JSON.parse(text);
 			} catch {
+				const looksHtml = /^\s*<(!doctype|html)/i.test(text);
+				if (looksHtml) {
+					throw new Error(
+						`接口没走到插件（HTTP ${res.status}，返回了网页）：当前部署在子路径下时，` +
+							`反代需要把 ${API} 一并转发给 dsh。`,
+					);
+				}
 				throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
 			}
 			if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);

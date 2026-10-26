@@ -180,6 +180,7 @@ Key 存在 `$DSH_HOME/dsh-billing-chip/settings.json`（权限 `0600`），接�
 | 今日一直是 ￥0 | `sessions` 目录是空的 | 装错机器了 |
 | 余额一直是「…」或「未设置」 | 没填 Key / Key 无效 | 右键填一次，看返回的错误原文（会显示官方报错） |
 | 局域网另一台机器打开时牌子报错 | 来源校验 | 用浏览器（有 Origin）访问就没事；脚本访问才要 `allowRemote` |
+| 点保存弹出 `HTTP 404: <!doctype html>…` | 部署在子路径（如 nginx 把 3080 反代到 `/dsh/`），绝对路径 `/api/…` 落到反代的 catch-all | 0.1.x 起会自动按 `/assets/` 前缀推断 base，刷新页面即可；更早的版本需要在反代里补 `location ^~ /api/dsh-billing-chip/` |
 
 ## 一句话总结
 
